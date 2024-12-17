@@ -2,12 +2,22 @@
   pia 17/12 - code for ALARM, buttons. putting on button controller.
   -> if sd card not working, have to unplug replug.
 
+  -> TIME & alarm -> update display every s.
+  -> uses esp32 rtc library as in student accom i can't use wifi time. 
+     if had real house  i could.
+
+  -> note should probably code so alarm disables after a while.
 */
 
 #include "Arduino.h"
 #include <SoftwareSerial.h>
 #include "DFRobotDFPlayerMini.h"
+#include <ESP32Time.h>
 
+//ESP32Time rtc;
+ESP32Time rtc(3600);  // offset in seconds GMT+1
+
+// dfplayer things & communication
 SoftwareSerial mySoftwareSerial(17, 16); // RX and TX pins for esp.
 DFRobotDFPlayerMini player; // dfplayer inst.
 
@@ -32,18 +42,24 @@ int butts[] = {ALARMBUTT, HOURBUTT, MINBUTT, SOUNDBUTT};
 unsigned long lastDebounceTime[4] = {0, 0, 0, 0};
 const unsigned long debounceDelay = 50;
 
-int alarmState = 2; // tri-state alarm var
-int hours = 0;
-int mins = 0;
+int alarmState = 0; // tri-state alarm var
 
 int sound = 2; // 6-state sound var
 int numSounds = 2;
 bool playing = false;
 
+// buffers for set-alarm time and real time
+int hours = 0;
+int mins = 0;
+char alarmTime[6]; // HH:MM -> string buffer or character array
+char currentTime[6]; // HH:MM
 
+static unsigned long lastTimeUpdate = 0; // counts 0-1000ms, 1s
 
 
 void setup() {
+  rtc.setTime(40, 29, 22, 21, 11, 2024); // 21st Nov 2024, 23:30:20 -> offset by one hour (??)
+
   // setup serial & mp3
   mySoftwareSerial.begin(9600);
   Serial.begin(115200);
@@ -71,15 +87,25 @@ void setup() {
   for (int i = 0; i < sizeof(leds) / sizeof(leds[0]); i++) {
     pinMode(leds[i], OUTPUT);
   }
-  alarmChangeState();
 
   Serial.print(sound); // current sound.
 }
 
 
+
 void loop() {
   // in loop : check all buttons to see if action is required.
   // buttons -> must push-release to register, no infinite holds.
+
+  // time display, change every second.
+  if (millis() - lastTimeUpdate >= 1000) { // need this as esp32 cycle uneven
+    lastTimeUpdate = millis();
+    Serial.println(rtc.getTime("%A, %B %d %Y %H:%M:%S"));   // (String) returns time with specified format 
+  }
+  struct tm timeinfo = rtc.getTimeStruct();
+
+  sprintf(alarmTime, "%02d:%02d", hours, mins);
+  sprintf(currentTime, "%02d:%02d", rtc.getHour(true), rtc.getMinute());
 
   // get all readings - external loop checks ALL BUTTONS using this
   for (int i = 0; i < sizeof(butts) / sizeof(butts[0]); i++) {
@@ -106,7 +132,7 @@ void loop() {
     lastButtRead[i] = reading;
 
     // CHECK ALARM STATE and COMPARE THE TIME;
-    if (alarmState == 2) {
+    if (strcmp(alarmTime, currentTime) == 0 && alarmState == 2) {
       if (playing == false) {
         Serial.println("Alarm started.");
         playing = true;
@@ -114,25 +140,6 @@ void loop() {
       }
     }
   }
-
-
-
-
-  /*
-  Serial.println(alarmState);
-  //soundChange();
-  if (alarmState == 2) {
-    player.loop(sound);
-  }
-
-  delay(10000); // 10 seconds
-
-  if (count == 4) {
-    alarmState = 0;
-    player.stop(); // emulates effect of alarm button press / state change
-  }
-
-  count = (count + 1) % 5; */
 }
 
 
@@ -218,7 +225,7 @@ void soundChange() {
     Serial.println("Bro you can't do that right now!");
     return;
   }
-  
+
   // change the sound, based on limit
   sound = (sound % numSounds) + 1; // 1 more cause thats how deef works i guess
   player.play(sound);
